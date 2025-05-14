@@ -1,15 +1,18 @@
-use futures_util::stream::StreamExt;
 use axum::{
-    extract::{ws::{Message, WebSocket, WebSocketUpgrade}, Query, State},
-    response::{IntoResponse, Response, Json},
-    routing::{any, get}, 
     Router,
+    extract::{
+        Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::StatusCode,
+    response::{IntoResponse, Json, Response},
+    routing::{any, get},
 };
+use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite, FromRow};
-use tokio::task::JoinHandle;
+use sqlx::{FromRow, Pool, Sqlite, sqlite::SqlitePoolOptions};
 use std::sync::Arc;
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone)]
 struct AppState {
@@ -28,20 +31,23 @@ struct HashOnly {
 
 /// Simulated blockchain block.
 #[derive(Debug, Serialize, Deserialize, FromRow)]
-struct Block {                     
-    index_id: u64,                 // position in the chain
-    timestamp: u64,                // time when block is made 
-    transactions: String,          // transactions
-    nonce: u64,                    // used for proof-of-work
-    hash: String,                  // hash which will be caluculated
-    previous_hash: String,         // hash of previous block
+struct Block {
+    index_id: u64,         // position in the chain
+    timestamp: u64,        // time when block is made
+    transactions: String,  // transactions
+    nonce: u64,            // used for proof-of-work
+    hash: String,          // hash which will be caluculated
+    previous_hash: String, // hash of previous block
 }
 
-pub async fn blockchain_client_http_server_main () -> JoinHandle<()> {
+pub async fn blockchain_client_http_server_main() -> JoinHandle<()> {
     std::fs::create_dir_all("./data").expect("Creating `data` should not fail");
 
     let db_path = std::env::current_dir().unwrap().join("data/blockchain.db");
-    tracing::debug!("Attempting to connect to database at: {}", db_path.display());
+    tracing::debug!(
+        "Attempting to connect to database at: {}",
+        db_path.display()
+    );
 
     let db = SqlitePoolOptions::new()
         .connect(db_path.to_str().unwrap())
@@ -66,9 +72,7 @@ pub async fn blockchain_client_http_server_main () -> JoinHandle<()> {
     .await
     .unwrap();
 
-    let app_state = AppState{
-        db: Arc::new(db),
-    };
+    let app_state = AppState { db: Arc::new(db) };
 
     let app = Router::new()
         .route("/ws", any(handler_websocket))
@@ -80,16 +84,16 @@ pub async fn blockchain_client_http_server_main () -> JoinHandle<()> {
 
     let server_handle = tokio::spawn(async move {
         axum_server::Server::bind(addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
     });
 
     server_handle
 }
 
 async fn handler_websocket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
-    ws.on_upgrade(|socket| handle_socket(socket, state))    
+    ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
 async fn handle_socket(socket: WebSocket, state: AppState) {
@@ -112,7 +116,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                         VALUES(?1, ?2, ?3, ?4, ?5, ?6)
                         "#,
                     )
-                    .bind(block.index_id.try_into().expect("Conversion error"))
+                    .bind(i64::try_from(block.index_id).expect("Conversion error"))
                     .bind(block.timestamp as i64)
                     .bind(block.transactions)
                     .bind(block.nonce as i64)
@@ -123,16 +127,17 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     {
                         tracing::info!("DB insert error: {}", err);
                     }
-                },
+                }
                 Err(e) => tracing::info!("Failed to parse block {e}"),
             }
         }
     }
 }
 
-async fn handler_http (Query(params): Query<HashQuery>, 
-                       State(state): State<AppState>) -> impl IntoResponse {
-
+async fn handler_http(
+    Query(params): Query<HashQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     // Query the database using the block_id
     let result: Result<Option<String>, sqlx::Error> = sqlx::query_scalar(
         r#"
@@ -140,14 +145,14 @@ async fn handler_http (Query(params): Query<HashQuery>,
             hash
         FROM blocks
         WHERE index_id = ?
-        "#
+        "#,
     )
     .bind(params.block_id as i64)
     .fetch_optional(&*state.db)
     .await;
 
     match result {
-        Ok(Some(hash)) => Json(HashOnly{hash}).into_response(), // 200 OK with JSON
+        Ok(Some(hash)) => Json(HashOnly { hash }).into_response(), // 200 OK with JSON
         Ok(None) => (StatusCode::NOT_FOUND, "Block not found").into_response(), // 404
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
